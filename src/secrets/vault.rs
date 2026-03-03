@@ -2,6 +2,7 @@ use anyhow::Result;
 use metrics::counter;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::io::Write as IoWrite;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -85,4 +86,35 @@ impl Vault {
             result = result
         );
     }
+}
+
+// --- Age X25519 encryption/decryption ---
+
+/// Encrypt plaintext with an age X25519 public key
+pub fn encrypt_for_agent(plaintext: &str, pubkey_str: &str) -> Result<Vec<u8>> {
+    let pubkey: age::x25519::Recipient = pubkey_str
+        .parse()
+        .map_err(|e: &str| anyhow::anyhow!("invalid public key: {e}"))?;
+
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(&pubkey as &dyn age::Recipient))
+            .map_err(|e| anyhow::anyhow!("failed to create encryptor: {e}"))?;
+
+    let mut output = Vec::new();
+    let mut writer = encryptor.wrap_output(&mut output)?;
+    writer.write_all(plaintext.as_bytes())?;
+    writer.finish()?;
+    Ok(output)
+}
+
+/// Decrypt ciphertext with an age X25519 identity (private key)
+pub fn decrypt_with_identity(ciphertext: &[u8], identity_str: &str) -> Result<String> {
+    let identity: age::x25519::Identity = identity_str
+        .parse()
+        .map_err(|e: &str| anyhow::anyhow!("invalid identity: {e}"))?;
+
+    let decrypted =
+        age::decrypt(&identity, ciphertext).map_err(|e| anyhow::anyhow!("decryption failed: {e}"))?;
+
+    String::from_utf8(decrypted).map_err(|e| anyhow::anyhow!("invalid UTF-8 in decrypted data: {e}"))
 }

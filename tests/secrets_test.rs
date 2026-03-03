@@ -51,3 +51,31 @@ fn denies_nonexistent_secret() {
     let result = vault.read_secret("claude-chat", "nonexistent");
     assert!(result.is_err());
 }
+
+#[test]
+fn encrypts_and_decrypts_secret() {
+    use age::secrecy::ExposeSecret;
+    use age::x25519;
+
+    let identity = x25519::Identity::generate();
+    let pubkey = identity.to_public();
+    let pubkey_str = pubkey.to_string();
+
+    let plaintext = "ghp_test_token_value";
+    let encrypted =
+        claude_chat::secrets::vault::encrypt_for_agent(plaintext, &pubkey_str).unwrap();
+
+    // Encrypted blob must not contain plaintext
+    assert!(
+        !encrypted
+            .windows(plaintext.len())
+            .any(|w| w == plaintext.as_bytes()),
+        "plaintext leaked into ciphertext"
+    );
+
+    // Decrypt and verify round-trip
+    let identity_str = identity.to_string().expose_secret().to_string();
+    let decrypted =
+        claude_chat::secrets::vault::decrypt_with_identity(&encrypted, &identity_str).unwrap();
+    assert_eq!(decrypted, plaintext);
+}
