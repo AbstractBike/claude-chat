@@ -62,7 +62,7 @@ user = "@claude-bot:matrix.pin"
 password_file = "/run/secrets/matrix-password"
 
 [auth]
-default_allowed_users = ["@digger:matrix.pin"]
+default_allowed_users = ["@digger:matrix.abstract.bike"]
 
 [rooms.control]
 room_id = "!abc123:matrix.pin"
@@ -77,7 +77,7 @@ timeout_secs = 300
 room_id = "!ghi789:matrix.pin"
 work_dir = "/home/digger/git/claude-chat"
 store_dir = "/home/digger/.agent-store/claude-chat"
-allowed_users = ["@digger:matrix.pin", "@collaborator:matrix.pin"]
+allowed_users = ["@digger:matrix.abstract.bike", "@collaborator:matrix.abstract.bike"]
 
 [rooms.agents.home]
 room_id = "!jkl012:matrix.pin"
@@ -128,7 +128,7 @@ struct AgentState {
 Each agent maintains a local history at `~/.agent-store/<name>/history.jsonl`:
 
 ```json
-{"event_id":"$abc","ts":"2026-03-03T14:22:01Z","from":"@digger:matrix.pin","text":"update the flake","response_event":"$def","duration_ms":34500,"exit":"success"}
+{"event_id":"$abc","ts":"2026-03-03T14:22:01Z","from":"@digger:matrix.abstract.bike","text":"update the flake","response_event":"$def","duration_ms":34500,"exit":"success"}
 ```
 
 This is also emitted as structured logs to VictoriaLogs — the file is local backup, Grafana is the canonical source.

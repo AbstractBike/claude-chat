@@ -315,7 +315,7 @@ user = "@claude-bot:matrix.pin"
 password_file = "/run/secrets/matrix-password"
 
 [auth]
-default_allowed_users = ["@digger:matrix.pin"]
+default_allowed_users = ["@digger:matrix.abstract.bike"]
 
 [rooms.control]
 room_id = "!abc123:matrix.pin"
@@ -336,7 +336,7 @@ skywalking_endpoint = "http://192.168.0.4:11800"
 "#;
     let config: Config = toml::from_str(toml).unwrap();
     assert_eq!(config.matrix.user, "@claude-bot:matrix.pin");
-    assert_eq!(config.auth.default_allowed_users, vec!["@digger:matrix.pin"]);
+    assert_eq!(config.auth.default_allowed_users, vec!["@digger:matrix.abstract.bike"]);
     assert_eq!(config.rooms.agents.len(), 1);
     assert!(config.rooms.agents.contains_key("nixos"));
     assert_eq!(config.rooms.agents["nixos"].timeout_secs, Some(300));
@@ -910,7 +910,7 @@ async fn agent_state_history_appends() {
     let entry = HistoryEntry {
         event_id: "$abc".to_string(),
         ts: chrono::Utc::now(),
-        from: "@digger:matrix.pin".to_string(),
+        from: "@digger:matrix.abstract.bike".to_string(),
         text: "hello".to_string(),
         response_event: None,
         duration_ms: 1234,

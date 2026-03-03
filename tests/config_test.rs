@@ -9,7 +9,7 @@ user = "@claude-bot:matrix.pin"
 password_file = "/run/secrets/matrix-password"
 
 [auth]
-default_allowed_users = ["@digger:matrix.pin"]
+default_allowed_users = ["@digger:matrix.abstract.bike"]
 
 [rooms.control]
 room_id = "!abc123:matrix.pin"
@@ -30,7 +30,7 @@ skywalking_endpoint = "http://192.168.0.4:11800"
 "#;
     let config = Config::from_str(toml).unwrap();
     assert_eq!(config.matrix.user, "@claude-bot:matrix.pin");
-    assert_eq!(config.auth.default_allowed_users, vec!["@digger:matrix.pin"]);
+    assert_eq!(config.auth.default_allowed_users, vec!["@digger:matrix.abstract.bike"]);
     assert_eq!(config.rooms.agents.len(), 1);
     assert!(config.rooms.agents.contains_key("nixos"));
     assert_eq!(config.rooms.agents["nixos"].timeout_secs, Some(300));
