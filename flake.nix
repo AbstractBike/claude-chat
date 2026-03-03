@@ -54,6 +54,11 @@
               default = "claude";
               description = "Path to the claude CLI binary";
             };
+            extraEnvironment = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              description = "Extra environment variables for the service";
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -70,7 +75,7 @@
                   "CLAUDE_CHAT_CONFIG=${cfg.configFile}"
                   "CLAUDE_PATH=${cfg.claudePath}"
                   "RUST_LOG=claude_chat=info"
-                ];
+                ] ++ cfg.extraEnvironment;
               };
               Install.WantedBy = [ "default.target" ];
             };

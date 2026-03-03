@@ -43,15 +43,32 @@ impl BwrapBuilder {
             ]);
         }
 
+        // Bind mitmproxy CA cert if it exists (needed for HTTPS proxy)
+        let mitmproxy_cert = format!("{home}/.mitmproxy/mitmproxy-ca-cert.pem");
+        if std::path::Path::new(&mitmproxy_cert).exists() {
+            args.extend_from_slice(&[
+                "--ro-bind".into(), mitmproxy_cert, format!("{home}/.mitmproxy/mitmproxy-ca-cert.pem"),
+            ]);
+        }
+
         // Set HOME and working directory
         args.extend_from_slice(&[
-            "--setenv".into(), "HOME".into(), home,
+            "--setenv".into(), "HOME".into(), home.clone(),
             "--chdir".into(), self.work_dir.clone(),
             // Isolation
             "--unshare-all".into(),
             "--share-net".into(),
             "--die-with-parent".into(),
         ]);
+
+        // Propagate proxy and TLS env vars into sandbox
+        for var in &["HTTPS_PROXY", "HTTP_PROXY", "NODE_EXTRA_CA_CERTS", "ANTHROPIC_API_KEY"] {
+            if let Ok(val) = std::env::var(var) {
+                args.extend_from_slice(&[
+                    "--setenv".into(), var.to_string(), val,
+                ]);
+            }
+        }
 
         args
     }
