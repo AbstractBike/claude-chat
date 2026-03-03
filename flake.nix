@@ -1,5 +1,5 @@
 {
-  description = "Claude Telegram Bot — Nix flake with Home Manager module";
+  description = "Claude Chat Bot — Nix flake with Home Manager module";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,7 +17,7 @@
           ps.pytest-mock
         ]);
       in {
-        packages.claude-telegram = pkgs.writeShellScriptBin "claude-telegram" ''
+        packages.claude-chat = pkgs.writeShellScriptBin "claude-chat" ''
           export PYTHONPATH=${self}/
           exec ${pythonEnv}/bin/python -m bot.main
         '';
@@ -27,13 +27,13 @@
         };
       }
     ) // {
-      homeManagerModules.claude-telegram = { config, lib, pkgs, ... }:
+      homeManagerModules.claude-chat = { config, lib, pkgs, ... }:
         let
-          cfg = config.services.claude-telegram;
+          cfg = config.services.claude-chat;
           pythonEnv = pkgs.python312.withPackages (ps: [
             ps.python-telegram-bot
           ]);
-          botScript = pkgs.writeShellScriptBin "claude-telegram" ''
+          botScript = pkgs.writeShellScriptBin "claude-chat" ''
             export PYTHONPATH=${self}/
             export TELEGRAM_TOKEN=$(cat ${cfg.tokenFile})
             export ALLOWED_USERS="${lib.concatStringsSep "," cfg.allowedUsers}"
@@ -41,8 +41,8 @@
             exec ${pythonEnv}/bin/python -m bot.main
           '';
         in {
-          options.services.claude-telegram = {
-            enable = lib.mkEnableOption "Claude Telegram bot";
+          options.services.claude-chat = {
+            enable = lib.mkEnableOption "Claude Chat bot";
             tokenFile = lib.mkOption {
               type = lib.types.path;
               description = "Path to file containing the Telegram bot token (chmod 600)";
@@ -60,13 +60,13 @@
           };
 
           config = lib.mkIf cfg.enable {
-            systemd.user.services.claude-telegram = {
+            systemd.user.services.claude-chat = {
               Unit = {
-                Description = "Claude Telegram Bot";
+                Description = "Claude Chat Bot";
                 After = [ "network.target" ];
               };
               Service = {
-                ExecStart = "${botScript}/bin/claude-telegram";
+                ExecStart = "${botScript}/bin/claude-chat";
                 Restart = "on-failure";
                 RestartSec = "10s";
               };
