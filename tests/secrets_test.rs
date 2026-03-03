@@ -1,3 +1,4 @@
+use base64::Engine;
 use claude_chat::secrets::vault::{Vault, PolicyError};
 use tempfile::TempDir;
 use std::fs;
@@ -78,4 +79,57 @@ fn encrypts_and_decrypts_secret() {
     let decrypted =
         claude_chat::secrets::vault::decrypt_with_identity(&encrypted, &identity_str).unwrap();
     assert_eq!(decrypted, plaintext);
+}
+
+// --- MCP Server tests ---
+
+use claude_chat::secrets::mcp_server::SecretsVaultServer;
+
+#[test]
+fn mcp_server_builds_without_panic() {
+    let dir = TempDir::new().unwrap();
+    setup_vault(&dir);
+    let server = SecretsVaultServer::new(dir.path().to_str().unwrap(), "nixos");
+    assert!(server.is_ok());
+}
+
+#[test]
+fn mcp_server_handles_get_secret_with_encryption() {
+    use age::secrecy::ExposeSecret;
+    use age::x25519;
+
+    let dir = TempDir::new().unwrap();
+    setup_vault(&dir);
+
+    // Create agent keypair
+    let identity = x25519::Identity::generate();
+    let pubkey = identity.to_public();
+
+    // Write public key
+    fs::create_dir_all(dir.path().join("keys")).unwrap();
+    fs::write(dir.path().join("keys/nixos.pub"), pubkey.to_string()).unwrap();
+
+    let server = SecretsVaultServer::new(dir.path().to_str().unwrap(), "nixos").unwrap();
+    let result = server.handle_get_secret("github-token");
+    assert!(result.is_ok(), "get_secret should succeed: {:?}", result);
+
+    // The result should be base64-encoded encrypted data
+    let b64 = result.unwrap();
+    let encrypted =
+        base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+
+    // Decrypt and verify
+    let identity_str = identity.to_string().expose_secret().to_string();
+    let decrypted =
+        claude_chat::secrets::vault::decrypt_with_identity(&encrypted, &identity_str).unwrap();
+    assert!(decrypted.contains("ghp_test123"));
+}
+
+#[test]
+fn mcp_server_denies_unauthorized_secret() {
+    let dir = TempDir::new().unwrap();
+    setup_vault(&dir);
+    let server = SecretsVaultServer::new(dir.path().to_str().unwrap(), "nixos").unwrap();
+    let result = server.handle_get_secret("npm-token");
+    assert!(result.is_err());
 }
