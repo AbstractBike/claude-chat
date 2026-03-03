@@ -60,12 +60,31 @@ async fn main() -> Result<()> {
         }
     });
 
-    // 5. Build and authenticate Matrix client
-    let client = matrix::client::build_client(&config).await?;
+    // 5. Connect and run — retry forever on connection failures
+    let mut backoff_secs = 1u64;
+    let max_backoff_secs = 120u64;
 
-    // 6. Run sync loop (blocks until error or shutdown)
-    tracing::info!("bot ready, starting sync");
-    matrix::client::run_sync(client, config).await?;
+    loop {
+        match matrix::client::build_client(&config).await {
+            Ok(client) => {
+                tracing::info!("bot ready, starting sync");
+                backoff_secs = 1;
 
-    Ok(())
+                // run_sync loops forever internally; if it returns, something went wrong
+                if let Err(e) = matrix::client::run_sync(client, config.clone()).await {
+                    tracing::error!(error = %e, "sync loop exited with error, reconnecting");
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    backoff_secs,
+                    "failed to connect to Matrix, retrying"
+                );
+            }
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+        backoff_secs = (backoff_secs * 2).min(max_backoff_secs);
+    }
 }

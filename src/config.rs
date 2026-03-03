@@ -13,6 +13,9 @@ pub struct Config {
     #[serde(default)]
     pub observability: ObservabilityConfig,
     pub vault: Option<VaultConfig>,
+    /// Path to a minimal ~/.claude directory for sandboxed Claude CLI sessions.
+    /// If unset, falls back to $HOME/.claude (which may include heavy plugins).
+    pub claude_home: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

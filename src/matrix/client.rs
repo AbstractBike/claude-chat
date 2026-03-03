@@ -8,6 +8,7 @@ use matrix_sdk::{
 };
 use metrics::{counter, histogram};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::config::Config;
@@ -63,19 +64,30 @@ pub async fn build_client(config: &Config) -> Result<Client> {
     Ok(client)
 }
 
-/// Run the Matrix sync loop with message event handler.
+/// Run the Matrix sync loop forever. Reconnects on errors with exponential backoff.
+/// This function only returns if an unrecoverable error occurs during initial setup.
 pub async fn run_sync(client: Client, config: Arc<Config>) -> Result<()> {
     tracing::info!("starting Matrix sync loop");
+
+    // Gate to skip messages received during initial sync
+    let ready = Arc::new(AtomicBool::new(false));
 
     let own_user_id = config.matrix.user.clone();
 
     client.add_event_handler({
         let config = config.clone();
         let own_user = own_user_id.clone();
+        let ready = ready.clone();
         move |event: SyncRoomMessageEvent, room: Room| {
             let config = config.clone();
             let own_user = own_user.clone();
+            let ready = ready.clone();
             async move {
+                // Skip messages until initial sync completes
+                if !ready.load(Ordering::Relaxed) {
+                    return;
+                }
+
                 let event = match event {
                     SyncRoomMessageEvent::Original(e) => e,
                     _ => return,
@@ -87,21 +99,55 @@ pub async fn run_sync(client: Client, config: Arc<Config>) -> Result<()> {
         }
     });
 
-    // Initial sync to avoid processing old messages
+    // Initial sync to establish position — old messages are skipped by the ready gate
     let response = client.sync_once(SyncSettings::default()).await?;
     tracing::info!("initial sync complete, listening for new messages");
 
-    // Now sync continuously from the token after initial sync
-    let settings = SyncSettings::default().token(response.next_batch);
-    let start = Instant::now();
-    match client.sync(settings).await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            let elapsed = start.elapsed().as_secs_f64();
-            histogram!("claude_chat_matrix_sync_duration_seconds").record(elapsed);
-            counter!("claude_chat_matrix_sync_errors_total", "error" => e.to_string())
-                .increment(1);
-            Err(e.into())
+    // Now enable message processing
+    ready.store(true, Ordering::Relaxed);
+
+    // Sync loop with reconnection on transient errors
+    let mut next_batch = response.next_batch;
+    let mut backoff_secs = 1u64;
+    let max_backoff_secs = 60u64;
+
+    loop {
+        let settings = SyncSettings::default().token(next_batch.clone());
+        let start = Instant::now();
+
+        match client.sync(settings).await {
+            Ok(_) => {
+                // sync() normally runs forever; if it returns Ok, something unexpected happened
+                tracing::warn!("sync loop returned unexpectedly, restarting");
+                backoff_secs = 1;
+            }
+            Err(e) => {
+                let elapsed = start.elapsed().as_secs_f64();
+                histogram!("claude_chat_matrix_sync_duration_seconds").record(elapsed);
+                counter!("claude_chat_matrix_sync_errors_total", "error" => format!("{e}"))
+                    .increment(1);
+
+                tracing::error!(
+                    error = %e,
+                    backoff_secs,
+                    "sync loop error, will retry"
+                );
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                backoff_secs = (backoff_secs * 2).min(max_backoff_secs);
+
+                // Try to get a fresh sync token
+                match client.sync_once(SyncSettings::default()).await {
+                    Ok(resp) => {
+                        next_batch = resp.next_batch;
+                        tracing::info!("re-synced successfully, resuming");
+                        backoff_secs = 1;
+                    }
+                    Err(resync_err) => {
+                        tracing::error!(error = %resync_err, "re-sync failed, will retry");
+                    }
+                }
+            }
         }
     }
 }
@@ -157,7 +203,9 @@ async fn handle_room_message(
         AuthResult::Allowed => {}
         AuthResult::Denied => {
             tracing::warn!(user = %sender, agent = %agent_name, "unauthorized message");
-            send_text(&room, "Access denied.").await?;
+            if let Err(e) = send_text(&room, "Access denied.").await {
+                tracing::error!(error = %e, "failed to send denial message");
+            }
             return Ok(());
         }
     }
@@ -169,11 +217,16 @@ async fn handle_room_message(
         MessageSource::ControlCommand(cmd) => {
             tracing::info!(agent = %agent_name, cmd = %cmd, "control command");
             let reply = handle_agent_command(&cmd, &agent_name);
-            send_text(&room, &reply).await?;
+            if let Err(e) = send_text(&room, &reply).await {
+                tracing::error!(error = %e, agent = %agent_name, "failed to send command reply");
+            }
         }
         MessageSource::DepthExceeded { from, depth } => {
             tracing::warn!(agent = %agent_name, from = %from, depth, "inter-agent depth exceeded");
-            send_text(&room, &format!("Inter-agent depth limit exceeded (depth={depth}, from={from})")).await?;
+            let msg = format!("Inter-agent depth limit exceeded (depth={depth}, from={from})");
+            if let Err(e) = send_text(&room, &msg).await {
+                tracing::error!(error = %e, "failed to send depth-exceeded message");
+            }
         }
         MessageSource::UserMessage(text) | MessageSource::AgentMessage { text, .. } => {
             tracing::info!(agent = %agent_name, "spawning Claude session");
@@ -190,10 +243,22 @@ async fn handle_room_message(
                 agent_config.store_dir.clone(),
                 agent_config.timeout(),
                 std::env::var("CLAUDE_PATH").unwrap_or_else(|_| "claude".to_string()),
-            );
+            )
+            .with_claude_home(config.claude_home.clone());
 
-            let response = session.send_raw(&text).await?;
-            send_text(&room, &response).await?;
+            let response = match session.send_raw(&text).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    tracing::error!(error = %e, agent = %agent_name, "Claude session error");
+                    counter!("claude_chat_session_errors_total",
+                        "agent" => agent_name.clone()).increment(1);
+                    format!("(error: {e})")
+                }
+            };
+
+            if let Err(e) = send_text(&room, &response).await {
+                tracing::error!(error = %e, agent = %agent_name, "failed to send response");
+            }
 
             tracing::info!(agent = %agent_name, response_len = response.len(), "response sent");
         }

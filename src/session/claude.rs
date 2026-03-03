@@ -11,6 +11,7 @@ pub struct ClaudeSession {
     pub store_dir: Option<String>,
     pub timeout_secs: u64,
     claude_bin: String,
+    claude_home: Option<String>,
 }
 
 /// Resolve a binary path by following symlinks to get the real path.
@@ -32,6 +33,7 @@ impl ClaudeSession {
             store_dir: None,
             timeout_secs,
             claude_bin: resolve_bin(bin),
+            claude_home: None,
         }
     }
 
@@ -47,6 +49,7 @@ impl ClaudeSession {
             store_dir: None,
             timeout_secs,
             claude_bin: resolve_bin(bin),
+            claude_home: None,
         }
     }
 
@@ -63,7 +66,13 @@ impl ClaudeSession {
             store_dir: Some(store_dir),
             timeout_secs,
             claude_bin: resolve_bin(claude_bin),
+            claude_home: None,
         }
+    }
+
+    pub fn with_claude_home(mut self, claude_home: Option<String>) -> Self {
+        self.claude_home = claude_home;
+        self
     }
 
     pub fn session_id_from_alias(alias: &str) -> String {
@@ -73,7 +82,8 @@ impl ClaudeSession {
 
     pub fn build_command(&self, text: &str) -> Command {
         if let Some(ref store) = self.store_dir {
-            let bwrap = crate::sandbox::bwrap::BwrapBuilder::new(&self.work_dir, store);
+            let bwrap = crate::sandbox::bwrap::BwrapBuilder::new(&self.work_dir, store)
+                .with_claude_home(self.claude_home.clone());
             bwrap.wrap_command(
                 &self.claude_bin,
                 &[

@@ -3,6 +3,7 @@ use tokio::process::Command;
 pub struct BwrapBuilder {
     work_dir: String,
     store_dir: String,
+    claude_home: Option<String>,
 }
 
 impl BwrapBuilder {
@@ -10,13 +11,23 @@ impl BwrapBuilder {
         Self {
             work_dir: work_dir.into(),
             store_dir: store_dir.into(),
+            claude_home: None,
         }
+    }
+
+    pub fn with_claude_home(mut self, claude_home: Option<String>) -> Self {
+        self.claude_home = claude_home;
+        self
     }
 
     /// Returns the bwrap arguments (not including "bwrap" itself or the wrapped command)
     pub fn build_args(&self) -> Vec<String> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let claude_config = format!("{home}/.claude");
+
+        // Use dedicated claude_home if configured, otherwise fall back to ~/.claude
+        let claude_config_source = self.claude_home.clone()
+            .unwrap_or_else(|| format!("{home}/.claude"));
+        let claude_config_target = format!("{home}/.claude");
 
         let mut args = vec![
             // Read-only system binds
@@ -36,10 +47,10 @@ impl BwrapBuilder {
             "--bind".into(), self.store_dir.clone(), self.store_dir.clone(),
         ];
 
-        // Bind .claude config read-only if it exists (needed for Claude CLI)
-        if std::path::Path::new(&claude_config).exists() {
+        // Bind claude config read-only (source may differ from target)
+        if std::path::Path::new(&claude_config_source).exists() {
             args.extend_from_slice(&[
-                "--ro-bind".into(), claude_config.clone(), claude_config,
+                "--ro-bind".into(), claude_config_source, claude_config_target,
             ]);
         }
 
