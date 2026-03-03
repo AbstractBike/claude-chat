@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::config::Config;
+use crate::matrix::control::parse_control_command;
 use crate::matrix::handler::{classify_message, check_auth, AuthResult, MessageSource};
 use crate::matrix::sender::send_text;
 use crate::session::claude::ClaudeSession;
@@ -166,8 +167,9 @@ async fn handle_room_message(
 
     match source {
         MessageSource::ControlCommand(cmd) => {
-            tracing::info!(agent = %agent_name, cmd = %cmd, "control command in agent room");
-            send_text(&room, &format!("Control commands should be sent to the control room. Got: {cmd}")).await?;
+            tracing::info!(agent = %agent_name, cmd = %cmd, "control command");
+            let reply = handle_agent_command(&cmd, &agent_name);
+            send_text(&room, &reply).await?;
         }
         MessageSource::DepthExceeded { from, depth } => {
             tracing::warn!(agent = %agent_name, from = %from, depth, "inter-agent depth exceeded");
@@ -198,4 +200,35 @@ async fn handle_room_message(
     }
 
     Ok(())
+}
+
+const HELP_TEXT: &str = "\
+Available commands (use / or !):
+
+/help              — show this message
+/status            — platform status
+/list              — list configured agents
+/reset <agent>     — reset agent session
+/spawn <agent>     — spawn a new agent
+/kill <agent>      — stop a running agent
+/audit [agent]     — show audit log
+/grant <agent> <secret>   — grant secret access
+/revoke <agent> <secret>  — revoke secret access
+
+Send any other message to chat with the agent.";
+
+fn handle_agent_command(cmd: &str, agent_name: &str) -> String {
+    use crate::matrix::control::ControlCommand;
+
+    match parse_control_command(cmd) {
+        Some(ControlCommand::Help) | None if cmd == "/" || cmd == "!" => HELP_TEXT.to_string(),
+        Some(ControlCommand::Help) => HELP_TEXT.to_string(),
+        Some(ControlCommand::Status) => format!("Agent **{}** is running.", agent_name),
+        Some(ControlCommand::List) => format!("Current agent: **{}**\nFor full agent list use the control room.", agent_name),
+        Some(_) => format!(
+            "Command `{cmd}` must be sent to the control room.\n\n{}",
+            HELP_TEXT
+        ),
+        None => format!("Unknown command: `{cmd}`\n\n{}", HELP_TEXT),
+    }
 }
