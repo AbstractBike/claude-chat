@@ -1,74 +1,76 @@
 {
-  description = "Claude Chat Bot — Nix flake with Home Manager module";
+  description = "Claude Chat — Matrix/Claude multi-agent platform";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-        pythonEnv = pkgs.python312.withPackages (ps: [
-          ps.python-telegram-bot
-          ps.pytest
-          ps.pytest-asyncio
-          ps.pytest-mock
-        ]);
+        overlays = [ (import rust-overlay) ];
+        pkgs = import nixpkgs { inherit system overlays; };
+        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
       in {
-        packages.claude-chat = pkgs.writeShellScriptBin "claude-chat" ''
-          export PYTHONPATH=${self}/
-          exec ${pythonEnv}/bin/python -m bot.main
-        '';
+        packages.claude-chat = rustPlatform.buildRustPackage {
+          pname = "claude-chat";
+          version = "0.5.0";
+          src = self;
+          cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = with pkgs; [ pkg-config ];
+          buildInputs = with pkgs; [ openssl ];
+        };
+
+        packages.default = self.packages.${system}.claude-chat;
 
         devShells.default = pkgs.mkShell {
-          packages = [ pythonEnv pkgs.nodejs ];
+          packages = with pkgs; [ rustToolchain rust-analyzer bubblewrap age ];
+          RUST_LOG = "claude_chat=debug";
         };
       }
     ) // {
       homeManagerModules.claude-chat = { config, lib, pkgs, ... }:
         let
           cfg = config.services.claude-chat;
-          pythonEnv = pkgs.python312.withPackages (ps: [
-            ps.python-telegram-bot
-          ]);
-          botScript = pkgs.writeShellScriptBin "claude-chat" ''
-            export PYTHONPATH=${self}/
-            export TELEGRAM_TOKEN=$(cat ${cfg.tokenFile})
-            export ALLOWED_USERS="${lib.concatStringsSep "," cfg.allowedUsers}"
-            export CLAUDE_PATH="${cfg.claudePath}"
-            exec ${pythonEnv}/bin/python -m bot.main
-          '';
+          claudeChatPkg = self.packages.${pkgs.system}.claude-chat;
         in {
           options.services.claude-chat = {
-            enable = lib.mkEnableOption "Claude Chat bot";
-            tokenFile = lib.mkOption {
+            enable = lib.mkEnableOption "Claude Chat Matrix bot";
+            configFile = lib.mkOption {
               type = lib.types.path;
-              description = "Path to file containing the Telegram bot token (chmod 600)";
-            };
-            allowedUsers = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [];
-              description = "List of Telegram @usernames allowed to use the bot (empty = open)";
+              description = "Path to config.toml";
             };
             claudePath = lib.mkOption {
               type = lib.types.str;
               default = "claude";
-              description = "Full path to the claude binary (required when systemd PATH does not include it)";
+              description = "Path to the claude CLI binary";
             };
           };
 
           config = lib.mkIf cfg.enable {
             systemd.user.services.claude-chat = {
               Unit = {
-                Description = "Claude Chat Bot";
+                Description = "Claude Chat Matrix Bot";
                 After = [ "network.target" ];
               };
               Service = {
-                ExecStart = "${botScript}/bin/claude-chat";
+                ExecStart = "${claudeChatPkg}/bin/claude-chat";
                 Restart = "on-failure";
                 RestartSec = "10s";
+                Environment = [
+                  "CLAUDE_CHAT_CONFIG=${cfg.configFile}"
+                  "CLAUDE_PATH=${cfg.claudePath}"
+                  "RUST_LOG=claude_chat=info"
+                ];
               };
               Install.WantedBy = [ "default.target" ];
             };
